@@ -1,7 +1,12 @@
-import time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
+import os
+
+SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
+ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+ENDPOINT = os.getenv("BUCKET_ENDPOINT")
+AWS_BUCKET = os.getenv("MINIO_BUCKET")
 
 # JSON Schema for the commit. I don't know if I'll use it right now but good to have it defined
 commit_json_schema = StructType(
@@ -28,7 +33,14 @@ json_schema = StructType(
 
 spark = (
     SparkSession.builder.appName("KafkaStream")
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.2")
+    .config(
+        "spark.jars.packages",
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.2,org.apache.hadoop:hadoop-aws:3.3.2",
+    )
+    .config("spark.hadoop.fs.s3a.endpoint", ENDPOINT)
+    .config("spark.hadoop.fs.s3a.access.key", ACCESS_KEY)
+    .config("spark.hadoop.fs.s3a.secret.key", SECRET_KEY)
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
     .getOrCreate()
 )
 
@@ -39,6 +51,9 @@ kafka_df = (
     .option("kafka.bootstrap.servers", "localhost:9093")
     .option("subscribe", "atproto_firehose_repo")
     .option("auto.offset.reset", "earliest")
+    .option(
+        "failOnDataLoss", "false"
+    )  # To make sure incase Kafka goes down and comes back up, everything keeps going
     .load()
     .selectExpr("CAST(value AS STRING)")
 )
@@ -66,10 +81,12 @@ df_partitioned = df_with_ts.withColumn(
 query = (
     df_partitioned.writeStream.format("parquet")
     .outputMode("append")
-    .option("path", "outputs/pyspark_stream")
-    .option("checkpointLocation", "outputs/checkpoint")
+    # .option("path", "outputs/pyspark_stream")
+    .option("path", f"s3a://{AWS_BUCKET}/parquet_output")
+    # .option("checkpointLocation", "outputs/checkpoint")
+    .option("checkpointLocation", f"s3a://{AWS_BUCKET}/checkpoints/parquet_output_cp")
     .partitionBy("partition_day", "partition_hour")
-    .trigger(processingTime="1 minutes")
+    .trigger(processingTime="20 minutes")
     .start()
     .awaitTermination()
 )
