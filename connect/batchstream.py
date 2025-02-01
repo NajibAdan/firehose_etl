@@ -48,7 +48,7 @@ spark = (
 # TO DO: LETS NOT HARDCODE
 kafka_df = (
     spark.readStream.format("kafka")
-    .option("kafka.bootstrap.servers", "localhost:9093")
+    .option("kafka.bootstrap.servers", "kafka:9092")
     .option("subscribe", "atproto_firehose_repo")
     .option("auto.offset.reset", "earliest")
     .option(
@@ -71,23 +71,20 @@ df_with_ts = json_df.withColumn(
     "event_ts", (col("time_us") / 1_000_000).cast(TimestampType())
 )
 
-# Create day & hour columns for partitioning
+# Partition by day since the process being triggered hourly
 # Maybe partition by month & year also?
 df_partitioned = df_with_ts.withColumn(
     "partition_day", date_format(col("event_ts"), "yyyy-MM-dd")
-).withColumn("partition_hour", date_format(col("event_ts"), "HH"))
+)
 
 # Write the stream
 query = (
     df_partitioned.writeStream.format("parquet")
     .outputMode("append")
-    # .option("path", "outputs/pyspark_stream")
     .option("path", f"s3a://{AWS_BUCKET}/parquet_output")
-    # .option("checkpointLocation", "outputs/checkpoint")
     .option("checkpointLocation", f"s3a://{AWS_BUCKET}/checkpoints/parquet_output_cp")
-    .partitionBy("partition_day", "partition_hour")
-    .trigger(processingTime="20 minutes")
+    .partitionBy("partition_day")
+    .trigger(processingTime="1 minutes")
     .start()
     .awaitTermination()
 )
-# .foreachBatch(process_dataframe) \

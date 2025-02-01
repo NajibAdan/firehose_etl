@@ -30,5 +30,5 @@ async def connect_to_firehose():
 
 
 if __name__ == "__main__":
-    producer = Producer({"bootstrap.servers": "localhost:9093"})
+    producer = Producer({"bootstrap.servers": "kafka:9092"})
     asyncio.run(connect_to_firehose())

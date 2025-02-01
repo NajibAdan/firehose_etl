@@ -7,6 +7,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "confluent-kafka" },
+    { name = "py4j" },
     { name = "pyspark" },
     { name = "typing" },
     { name = "websockets" },
@@ -15,6 +16,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "confluent-kafka", specifier = ">=2.7.0" },
+    { name = "py4j", specifier = ">=0.10.9.7" },
     { name = "pyspark", specifier = "==3.5.1" },
     { name = "typing", specifier = ">=3.10.0.0" },
     { name = "websockets", specifier = ">=14.1" },
