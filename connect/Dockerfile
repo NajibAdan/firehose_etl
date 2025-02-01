@@ -1,32 +1,58 @@
-FROM apache/spark:3.4.4-python3 as base
+FROM python:3.11-bullseye as spark-base
 
-FROM base AS builder
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /usr/local/bin/uv
-USER root
-ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+ARG SPARK_VERSION=3.3.3
 
-WORKDIR /app
-
-COPY pyproject.toml /app/
-COPY uv.lock /app/
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev -vv
-
-
-
-COPY connect/batchstream.py /app
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev -vv
-
-FROM base 
-COPY --from=builder /app /app
-ENV PATH="/app/.venv/bin:$PATH"
+# Install tools required by the OS
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    sudo \
+    curl \
+    vim \
+    unzip \
+    rsync \
+    openjdk-11-jdk \
+    build-essential \
+    software-properties-common \
+    ssh && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 
-# RUN wget https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar -o /app/spark-sql-kafka-0-10_2.12-3.5.1.jar
-# RUN wget https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.4.1/hadoop-aws-3.4.1.jar -o /app/hadoop-aws-3.4.1.jar
+# Setup the directories for our Spark and Hadoop installations
+ENV SPARK_HOME=${SPARK_HOME:-"/opt/spark"}
+ENV HADOOP_HOME=${HADOOP_HOME:-"/opt/hadoop"}
+
+RUN mkdir -p ${HADOOP_HOME} && mkdir -p ${SPARK_HOME}
+WORKDIR ${SPARK_HOME}
+
+# Download and install Spark
+RUN curl https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz -o spark-${SPARK_VERSION}-bin-hadoop3.tgz \
+    && tar xvzf spark-${SPARK_VERSION}-bin-hadoop3.tgz --directory /opt/spark --strip-components 1 \
+    && rm -rf spark-${SPARK_VERSION}-bin-hadoop3.tgz
 
 
-CMD ["spark-submit","--packages","org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.4,org.apache.hadoop:hadoop-aws:3.4.4","/app/batchstream.py"]
+FROM spark-base as pyspark
 
+# Install python deps
+COPY pyproject.toml .
+RUN pip3 install pyproject.toml[spark]
+
+# Setup Spark related environment variables
+ENV PATH="/opt/spark/sbin:/opt/spark/bin:${PATH}"
+ENV SPARK_MASTER="spark://spark-master:7077"
+ENV SPARK_MASTER_HOST spark-master
+ENV SPARK_MASTER_PORT 7077
+ENV PYSPARK_PYTHON python3
+
+# Copy the default configurations into $SPARK_HOME/conf
+COPY conf/spark-defaults.conf "$SPARK_HOME/conf"
+
+RUN chmod u+x /opt/spark/sbin/* && \
+    chmod u+x /opt/spark/bin/*
+
+ENV PYTHONPATH=$SPARK_HOME/python/:$PYTHONPATH
+
+# Copy appropriate entrypoint script
+COPY entrypoint.sh .
+
+ENTRYPOINT ["./entrypoint.sh"]

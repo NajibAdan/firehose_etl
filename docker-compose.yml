@@ -1,12 +1,13 @@
-version: "3"
 services:
   zookeeper:
+    container_name: firehose-zookeeper
     image: 'bitnami/zookeeper:latest'
     ports:
       - '2181:2181'
     environment:
       - ALLOW_ANONYMOUS_LOGIN=yes
   kafka:
+    container_name: firehose-kafka
     image: 'bitnami/kafka:latest'
     ports:
       - '9093:9093' #change to 9093 to access external from your windows host
@@ -22,6 +23,7 @@ services:
       - zookeeper
 
   minio:
+    container_name: firehose-minio
     image: quay.io/minio/minio:RELEASE.2022-05-26T05-48-41Z
     hostname: minio
     ports:
@@ -37,6 +39,7 @@ services:
     command: server --console-address ":9001" /data
 
   createbuckets:
+    container_name: firehose-createbuckets
     image: minio/mc
     links:
       - minio:minio
@@ -49,20 +52,65 @@ services:
     entrypoint: /etc/minio/create_bucket.sh
 
   datagen:
+    container_name: firehose-datagen
     build:
       context: .
       dockerfile: datagen/Dockerfile
     env_file:
       - .env
+    links:
+      - kafka
     depends_on:
       - kafka
 
-  pyspark:
+  # pyspark:
+  #   build:
+  #     context: .
+  #     dockerfile: connect/Dockerfile
+  #   env_file:
+  #     - .env
+  #   links:
+  #     - kafka
+  #   depends_on:
+  #     - datagen
+  #     - kafka
+
+  spark-master:
+    container_name: firehose-spark-master
     build:
       context: .
       dockerfile: connect/Dockerfile
+    image: spark-image
+    entrypoint: [ './entrypoint.sh', 'master' ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ./connect/:/opt/spark/apps
+      - spark-logs:/opt/spark/spark-events
     env_file:
+      - .env.spark
       - .env
+    ports:
+      - '9090:8080'
+      - '7077:7077'
     depends_on:
-      - datagen
       - kafka
+  spark-worker:
+    image: da-spark-image
+    container_name: firehose-spark-worker
+    entrypoint: [ './entrypoint.sh', 'worker' ]
+    depends_on:
+      - spark-master
+      - kafka
+    env_file:
+      - .env.spark
+      - .env
+    volumes:
+      - ./connect/:/opt/spark/apps
+      - spark-logs:/opt/spark/spark-events
+
+volumes:
+  spark-logs:

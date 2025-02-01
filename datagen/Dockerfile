@@ -1,26 +1,22 @@
-FROM python:3.11-slim AS base 
+FROM python:3.11-bullseye as base
 
-FROM base AS builder
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /usr/local/bin/uv
-
-ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    sudo \
+    curl \
+    vim \
+    unzip \
+    rsync \
+    build-essential \
+    software-properties-common \
+    ssh && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY pyproject.toml /app/
-COPY uv.lock /app/
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev -vv
+COPY pyproject.toml .
+RUN pip3 install .
 
-
-
-COPY datagen/firehose.py /app
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev -vv
-
-FROM base 
-COPY --from=builder /app /app
-ENV PATH="/app/.venv/bin:$PATH"
-
-CMD ["python","/app/firehose.py"]
+COPY datagen/firehose.py .
+CMD ["python","firehose.py"]
